@@ -122,11 +122,17 @@ static void timerblock_write(void *opaque, hwaddr addr,
     case 8: /* Control.  */
         old = tb->control;
         tb->control = value;
-        if (((old & 1) == 0) && (value & 1)) {
+        if ((old & 1) == (value & 1)) {
+            break;
+        }
+        if (value & 1) {
             if (tb->count == 0 && (tb->control & 2)) {
                 tb->count = tb->load;
             }
             timerblock_reload(tb, 1);
+        } else {
+            /* Shutdown timer.  */
+            timer_del(tb->timer);
         }
         break;
     case 12: /* Interrupt status.  */
