@@ -38,7 +38,7 @@ static inline int get_current_cpu(ARMMPTimerState *s)
 
 static inline void timerblock_update_irq(TimerBlock *tb)
 {
-    qemu_set_irq(tb->irq, tb->status);
+    qemu_set_irq(tb->irq, tb->status && (tb->control & 4));
 }
 
 /* Return conversion factor from mpcore timer ticks to qemu timer ticks.  */
@@ -122,6 +122,9 @@ static void timerblock_write(void *opaque, hwaddr addr,
     case 8: /* Control.  */
         old = tb->control;
         tb->control = value;
+        if ((old & 4) != (value & 4)) {
+            timerblock_update_irq(tb);
+        }
         if (value & 1) {
             if ((old & 1) && (tb->count != 0)) {
                 /* Do nothing if timer is ticking right now.  */
