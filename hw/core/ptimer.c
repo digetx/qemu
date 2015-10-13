@@ -180,6 +180,8 @@ void ptimer_set_freq(ptimer_state *s, uint32_t freq)
    count = limit.  */
 void ptimer_set_limit(ptimer_state *s, uint64_t limit, int reload)
 {
+    uint64_t count = limit;
+
     /*
      * Artificially limit timeout rate to something
      * achievable under QEMU.  Otherwise, QEMU spends all
@@ -195,7 +197,7 @@ void ptimer_set_limit(ptimer_state *s, uint64_t limit, int reload)
 
     s->limit = limit;
     if (reload)
-        s->delta = limit;
+        s->delta = count;
     if (s->enabled && reload) {
         s->next_event = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         ptimer_reload(s);
