@@ -19,6 +19,7 @@ struct ptimer_state
     int64_t period;
     int64_t last_event;
     int64_t next_event;
+    uint8_t next_event_corrected;
     QEMUBH *bh;
     QEMUTimer *timer;
 };
@@ -48,6 +49,22 @@ static void ptimer_reload(ptimer_state *s)
     if (s->period_frac) {
         s->next_event += ((int64_t)s->period_frac * s->delta) >> 32;
     }
+
+    /*
+     * Artificially limit timeout to something
+     * achievable under QEMU.  Otherwise, QEMU spends all
+     * its time generating timer interrupts, and there
+     * is no forward progress.
+     * About ten microseconds is the fastest that really works
+     * on the current generation of host machines.
+     */
+
+    s->next_event_corrected = !!(s->next_event - s->last_event < 10000);
+
+    if (s->next_event_corrected) {
+        s->next_event = s->last_event + 10000;
+    }
+
     timer_mod(s->timer, s->next_event);
 }
 
@@ -76,6 +93,9 @@ uint64_t ptimer_get_count(ptimer_state *s)
             /* Prevent timer underflowing if it should already have
                triggered.  */
             counter = 0;
+        } if (s->next_event_corrected) {
+            /* Always return 1 when timer expire value was corrected.  */
+            counter = 1;
         } else {
             uint64_t rem;
             uint64_t div;
@@ -180,19 +200,6 @@ void ptimer_set_freq(ptimer_state *s, uint32_t freq)
    count = limit.  */
 void ptimer_set_limit(ptimer_state *s, uint64_t limit, int reload)
 {
-    /*
-     * Artificially limit timeout rate to something
-     * achievable under QEMU.  Otherwise, QEMU spends all
-     * its time generating timer interrupts, and there
-     * is no forward progress.
-     * About ten microseconds is the fastest that really works
-     * on the current generation of host machines.
-     */
-
-    if (!use_icount && limit * s->period < 10000 && s->period) {
-        limit = 10000 / s->period;
-    }
-
     s->limit = limit;
     if (reload)
         s->delta = limit;
@@ -204,7 +211,7 @@ void ptimer_set_limit(ptimer_state *s, uint64_t limit, int reload)
 
 const VMStateDescription vmstate_ptimer = {
     .name = "ptimer",
-    .version_id = 1,
+    .version_id = 2,
     .minimum_version_id = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT8(enabled, ptimer_state),
@@ -214,6 +221,7 @@ const VMStateDescription vmstate_ptimer = {
         VMSTATE_INT64(period, ptimer_state),
         VMSTATE_INT64(last_event, ptimer_state),
         VMSTATE_INT64(next_event, ptimer_state),
+        VMSTATE_UINT8(next_event_corrected, ptimer_state),
         VMSTATE_TIMER_PTR(timer, ptimer_state),
         VMSTATE_END_OF_LIST()
     }
