@@ -85,15 +85,21 @@ static void ptimer_tick(void *opaque)
 
 uint64_t ptimer_get_count(ptimer_state *s)
 {
+    int enabled = s->enabled;
     int64_t now;
+    int64_t next;
     uint64_t counter;
+    int expired;
+    int oneshot;
 
-    if (s->enabled) {
+    if (enabled) {
         now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        next = s->next_event;
+        expired = (now - next >= 0);
+        oneshot = (enabled == 2);
         /* Figure out the current counter value.  */
-        if (now - s->next_event > 0
-            || s->period == 0) {
-            /* Prevent timer underflowing if it should already have
+        if ((s->period == 0) || (expired && oneshot)) {
+            /* Prevent one-shot timer underflowing if it should already have
                triggered.  */
             counter = 0;
         } else {
@@ -114,12 +120,12 @@ uint64_t ptimer_get_count(ptimer_state *s)
                backwards.
             */
 
-            if ((s->enabled == 1) && (s->limit * period < 10000)) {
+            if (!oneshot && (s->limit * period < 10000)) {
                 period = 10000 / s->limit;
                 period_frac = 0;
             }
 
-            rem = s->next_event - now;
+            rem = expired ? now - next : next - now;
             div = period;
 
             clz1 = clz64(rem);
@@ -139,6 +145,23 @@ uint64_t ptimer_get_count(ptimer_state *s)
                     div += 1;
             }
             counter = rem / div;
+
+            if (expired && (counter != 0)) {
+                /* Wrap around periodic counter.  */
+                counter = s->delta = s->limit - counter % s->limit;
+            }
+        }
+
+        if (expired) {
+            if (counter == 0) {
+                ptimer_tick(s);
+            } else {
+                /* Don't use ptimer_tick() for the periodic timer since it
+                 * would reset the delta value.
+                 */
+                ptimer_trigger(s);
+                ptimer_reload(s);
+            }
         }
     } else {
         counter = s->delta;
