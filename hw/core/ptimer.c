@@ -83,14 +83,17 @@ static void ptimer_tick(void *opaque)
 
 uint64_t ptimer_get_count(ptimer_state *s)
 {
-    int64_t now;
+    int enabled = s->enabled;
     uint64_t counter;
 
-    if (s->enabled) {
-        now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (enabled) {
+        int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        int64_t next = s->next_event;
+        int expired = (now - next >= 0);
+        int oneshot = (enabled == 2);
+
         /* Figure out the current counter value.  */
-        if (now - s->next_event > 0
-            || s->period == 0) {
+        if (s->period == 0 || (expired && (use_icount || oneshot))) {
             /* Prevent timer underflowing if it should already have
                triggered.  */
             counter = 0;
@@ -102,7 +105,7 @@ uint64_t ptimer_get_count(ptimer_state *s)
             uint32_t period_frac = s->period_frac;
             uint64_t period = s->period;
 
-            if ((s->enabled == 1) && !use_icount && (s->delta * period < 10000)) {
+            if (!oneshot && !use_icount && (s->delta * period < 10000)) {
                 period = 10000 / s->delta;
                 period_frac = 0;
             }
@@ -117,7 +120,7 @@ uint64_t ptimer_get_count(ptimer_state *s)
                backwards.
             */
 
-            rem = s->next_event - now;
+            rem = expired ? now - next : next - now;
             div = period;
 
             clz1 = clz64(rem);
@@ -137,6 +140,15 @@ uint64_t ptimer_get_count(ptimer_state *s)
                     div += 1;
             }
             counter = rem / div;
+
+            if (expired && (counter != 0)) {
+                /* Wrap around periodic counter.  */
+                counter = s->limit - counter % s->limit;
+            }
+        }
+
+        if (expired) {
+            ptimer_tick(s);
         }
     } else {
         counter = s->delta;
