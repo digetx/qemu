@@ -39,11 +39,14 @@ static void ptimer_reload(ptimer_state *s)
 
     if (s->delta == 0) {
         ptimer_trigger(s);
+    }
+
+    if (s->delta == 0 && s->enabled == 1) {
         s->delta = s->limit;
     }
-    if (s->delta == 0 || s->period == 0) {
-        fprintf(stderr, "Timer with period zero, disabling\n");
-        s->enabled = 0;
+
+    if (s->delta == 0) {
+        ptimer_stop(s);
         return;
     }
 
@@ -72,27 +75,22 @@ static void ptimer_reload(ptimer_state *s)
 static void ptimer_tick(void *opaque)
 {
     ptimer_state *s = (ptimer_state *)opaque;
-    ptimer_trigger(s);
     s->delta = 0;
-    if (s->enabled == 2) {
-        s->enabled = 0;
-    } else {
-        ptimer_reload(s);
-    }
+    ptimer_reload(s);
 }
 
 uint64_t ptimer_get_count(ptimer_state *s)
 {
     uint64_t counter;
 
-    if (s->enabled) {
+    if (s->enabled && s->delta != 0) {
         int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         int64_t next = s->next_event;
         bool expired = (now - next >= 0);
         bool oneshot = (s->enabled == 2);
 
         /* Figure out the current counter value.  */
-        if (s->period == 0 || (expired && (oneshot || use_icount))) {
+        if (expired && (oneshot || use_icount)) {
             /* Prevent timer underflowing if it should already have
                triggered.  */
             counter = 0;
@@ -164,12 +162,10 @@ void ptimer_run(ptimer_state *s, int oneshot)
 {
     bool was_disabled = !s->enabled;
 
-    if (was_disabled && s->period == 0) {
-        fprintf(stderr, "Timer with period zero, disabling\n");
-        return;
-    }
     s->enabled = oneshot ? 2 : 1;
+
     if (was_disabled) {
+        g_assert(s->period != 0);
         s->next_event = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         ptimer_reload(s);
     }
@@ -190,6 +186,7 @@ void ptimer_stop(ptimer_state *s)
 /* Set counter increment interval in nanoseconds.  */
 void ptimer_set_period(ptimer_state *s, int64_t period)
 {
+    g_assert(period != 0);
     s->delta = ptimer_get_count(s);
     s->period = period;
     s->period_frac = 0;
@@ -202,6 +199,7 @@ void ptimer_set_period(ptimer_state *s, int64_t period)
 /* Set counter frequency in Hz.  */
 void ptimer_set_freq(ptimer_state *s, uint32_t freq)
 {
+    g_assert(freq != 0 && freq <= 1000000000);
     s->delta = ptimer_get_count(s);
     s->period = 1000000000ll / freq;
     s->period_frac = (1000000000ll << 32) / freq;
