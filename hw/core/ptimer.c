@@ -36,13 +36,20 @@ static void ptimer_reload(ptimer_state *s)
 {
     uint32_t period_frac = s->period_frac;
     uint64_t period = s->period;
+    int periodic = (s->enabled == 1);
 
-    if (s->delta == 0) {
+    if (s->delta == 0 && period != 0) {
         ptimer_trigger(s);
-        s->delta = s->limit;
+        if (periodic) {
+            s->delta = s->limit;
+        }
     }
-    if (s->delta == 0 || s->period == 0) {
-        fprintf(stderr, "Timer with period zero, disabling\n");
+    if (s->delta == 0 || period == 0) {
+        if (period == 0) {
+            fprintf(stderr, "Timer with period zero, disabling\n");
+            s->delta = 0;
+        }
+        timer_del(s->timer);
         s->enabled = 0;
         return;
     }
@@ -56,7 +63,7 @@ static void ptimer_reload(ptimer_state *s)
      * on the current generation of host machines.
      */
 
-    if ((s->enabled == 1) && !use_icount && (s->delta * period < 10000)) {
+    if (periodic && !use_icount && (s->delta * period < 10000)) {
         period = 10000 / s->delta;
         period_frac = 0;
     }
@@ -86,14 +93,14 @@ uint64_t ptimer_get_count(ptimer_state *s)
     int enabled = s->enabled;
     uint64_t counter;
 
-    if (enabled) {
+    if (enabled && s->delta != 0) {
         int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         int64_t next = s->next_event;
         int expired = (now - next >= 0);
         int oneshot = (enabled == 2);
 
         /* Figure out the current counter value.  */
-        if (s->period == 0 || (expired && (use_icount || oneshot))) {
+        if (expired && (use_icount || oneshot)) {
             /* Prevent timer underflowing if it should already have
                triggered.  */
             counter = 0;
