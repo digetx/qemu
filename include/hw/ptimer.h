@@ -12,6 +12,11 @@
 #include "qemu/timer.h"
 #include "migration/vmstate.h"
 
+enum ptimer_policy {
+    UNIMPLEMENTED,
+    SET_CNT_TO_0_TRIGGERS_IRQ_AFTER_ONE_PERIOD,
+};
+
 /* ptimer.c */
 typedef struct ptimer_state ptimer_state;
 typedef void (*ptimer_cb)(void *opaque);
@@ -25,6 +30,7 @@ uint64_t ptimer_get_count(ptimer_state *s);
 void ptimer_set_count(ptimer_state *s, uint64_t count);
 void ptimer_run(ptimer_state *s, int oneshot);
 void ptimer_stop(ptimer_state *s);
+void ptimer_set_policy(ptimer_state *s, enum ptimer_policy policy);
 
 extern const VMStateDescription vmstate_ptimer;
 

@@ -21,6 +21,7 @@ struct ptimer_state
     int64_t period;
     int64_t last_event;
     int64_t next_event;
+    uint8_t policy;
     QEMUBH *bh;
     QEMUTimer *timer;
 };
@@ -37,15 +38,16 @@ static void ptimer_reload(ptimer_state *s)
 {
     uint32_t period_frac = s->period_frac;
     uint64_t period = s->period;
+    uint64_t delta = MAX(1, s->delta);
 
-    if (s->delta == 0) {
-        ptimer_trigger(s);
-        s->delta = s->limit;
+    if (s->delta == 0 && s->policy == UNIMPLEMENTED) {
+        hw_error("ptimer: Running with counter=0 is unimplemented by " \
+                 "this timer, fix it!\n");
     }
-    if (s->delta == 0 || s->period == 0) {
-        fprintf(stderr, "Timer with period zero, disabling\n");
-        s->enabled = 0;
-        return;
+
+    if (period == 0) {
+        hw_error("ptimer: Timer tries to run with period=0, behaviour is " \
+                 "undefined, fix it!\n");
     }
 
     /*
@@ -57,15 +59,15 @@ static void ptimer_reload(ptimer_state *s)
      * on the current generation of host machines.
      */
 
-    if (s->enabled == 1 && (s->delta * period < 10000) && !use_icount) {
-        period = 10000 / s->delta;
+    if (s->enabled == 1 && (delta * period < 10000) && !use_icount) {
+        period = 10000 / delta;
         period_frac = 0;
     }
 
     s->last_event = s->next_event;
-    s->next_event = s->last_event + s->delta * period;
+    s->next_event = s->last_event + delta * period;
     if (period_frac) {
-        s->next_event += ((int64_t)period_frac * s->delta) >> 32;
+        s->next_event += ((int64_t)period_frac * delta) >> 32;
     }
     timer_mod(s->timer, s->next_event);
 }
@@ -73,27 +75,30 @@ static void ptimer_reload(ptimer_state *s)
 static void ptimer_tick(void *opaque)
 {
     ptimer_state *s = (ptimer_state *)opaque;
-    ptimer_trigger(s);
-    s->delta = 0;
-    if (s->enabled == 2) {
+
+    s->delta = (s->enabled == 1) ? s->limit : 0;
+
+    if (s->delta == 0) {
         s->enabled = 0;
     } else {
         ptimer_reload(s);
     }
+
+    ptimer_trigger(s);
 }
 
 uint64_t ptimer_get_count(ptimer_state *s)
 {
     uint64_t counter;
 
-    if (s->enabled) {
+    if (s->enabled && s->delta != 0) {
         int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         int64_t next = s->next_event;
         bool expired = (now - next >= 0);
         bool oneshot = (s->enabled == 2);
 
         /* Figure out the current counter value.  */
-        if (s->period == 0 || (expired && (oneshot || use_icount))) {
+        if (expired && (oneshot || use_icount)) {
             /* Prevent timer underflowing if it should already have
                triggered.  */
             counter = 0;
@@ -165,11 +170,8 @@ void ptimer_run(ptimer_state *s, int oneshot)
 {
     bool was_disabled = !s->enabled;
 
-    if (was_disabled && s->period == 0) {
-        fprintf(stderr, "Timer with period zero, disabling\n");
-        return;
-    }
     s->enabled = oneshot ? 2 : 1;
+
     if (was_disabled) {
         s->next_event = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         ptimer_reload(s);
@@ -203,6 +205,7 @@ void ptimer_set_period(ptimer_state *s, int64_t period)
 /* Set counter frequency in Hz.  */
 void ptimer_set_freq(ptimer_state *s, uint32_t freq)
 {
+    g_assert(freq != 0 && freq <= 1000000000);
     s->delta = ptimer_get_count(s);
     s->period = 1000000000ll / freq;
     s->period_frac = (1000000000ll << 32) / freq;
@@ -230,10 +233,15 @@ uint64_t ptimer_get_limit(ptimer_state *s)
     return s->limit;
 }
 
+void ptimer_set_policy(ptimer_state *s, enum ptimer_policy policy)
+{
+    s->policy = policy;
+}
+
 const VMStateDescription vmstate_ptimer = {
     .name = "ptimer",
-    .version_id = 1,
-    .minimum_version_id = 1,
+    .version_id = 2,
+    .minimum_version_id = 2,
     .fields = (VMStateField[]) {
         VMSTATE_UINT8(enabled, ptimer_state),
         VMSTATE_UINT64(limit, ptimer_state),
@@ -243,6 +251,7 @@ const VMStateDescription vmstate_ptimer = {
         VMSTATE_INT64(last_event, ptimer_state),
         VMSTATE_INT64(next_event, ptimer_state),
         VMSTATE_TIMER_PTR(timer, ptimer_state),
+        VMSTATE_UINT8(policy, ptimer_state),
         VMSTATE_END_OF_LIST()
     }
 };
