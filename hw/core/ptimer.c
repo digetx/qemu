@@ -136,7 +136,7 @@ uint64_t ptimer_get_count(ptimer_state *s)
                 if ((uint32_t)(period_frac << shift))
                     div += 1;
             }
-            counter = rem / div;
+            counter = rem / div + (expired ? 0 : 1);
 
             if (expired && counter != 0) {
                 /* Wrap around periodic counter.  */
