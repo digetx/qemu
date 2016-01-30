@@ -89,10 +89,10 @@ static void ptimer_tick(void *opaque)
 
 uint64_t ptimer_get_count(ptimer_state *s)
 {
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     uint64_t counter;
 
-    if (s->enabled && s->delta != 0) {
-        int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (s->enabled && s->delta != 0 && now != s->last_event) {
         int64_t next = s->next_event;
         bool expired = (now - next >= 0);
         bool oneshot = (s->enabled == 2);
@@ -144,7 +144,7 @@ uint64_t ptimer_get_count(ptimer_state *s)
                 if ((uint32_t)(period_frac << shift))
                     div += 1;
             }
-            counter = rem / div;
+            counter = rem / div + (expired ? 0 : 1);
 
             if (expired && counter != 0) {
                 /* Wrap around periodic counter.  */
