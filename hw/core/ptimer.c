@@ -36,19 +36,7 @@ static void ptimer_reload(ptimer_state *s)
 {
     uint32_t period_frac = s->period_frac;
     uint64_t period = s->period;
-
-    if (s->delta == 0) {
-        ptimer_trigger(s);
-    }
-
-    if (s->delta == 0 && s->enabled == 1) {
-        s->delta = s->limit;
-    }
-
-    if (s->delta == 0) {
-        ptimer_stop(s);
-        return;
-    }
+    uint64_t delta = MAX(1, s->delta);
 
     /*
      * Artificially limit timeout rate to something
@@ -59,15 +47,15 @@ static void ptimer_reload(ptimer_state *s)
      * on the current generation of host machines.
      */
 
-    if (s->enabled == 1 && (s->delta * period < 10000) && !use_icount) {
-        period = 10000 / s->delta;
+    if (s->enabled == 1 && (delta * period < 10000) && !use_icount) {
+        period = 10000 / delta;
         period_frac = 0;
     }
 
     s->last_event = s->next_event;
-    s->next_event = s->last_event + s->delta * period;
+    s->next_event = s->last_event + delta * period;
     if (period_frac) {
-        s->next_event += ((int64_t)period_frac * s->delta) >> 32;
+        s->next_event += ((int64_t)period_frac * delta) >> 32;
     }
     timer_mod(s->timer, s->next_event);
 }
@@ -75,8 +63,16 @@ static void ptimer_reload(ptimer_state *s)
 static void ptimer_tick(void *opaque)
 {
     ptimer_state *s = (ptimer_state *)opaque;
-    s->delta = 0;
-    ptimer_reload(s);
+
+    s->delta = (s->enabled == 1) ? s->limit : 0;
+
+    if (s->delta == 0) {
+        s->enabled = 0;
+    } else {
+        ptimer_reload(s);
+    }
+
+    ptimer_trigger(s);
 }
 
 uint64_t ptimer_get_count(ptimer_state *s)
